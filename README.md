@@ -20,7 +20,7 @@
 
 <br>
 
-[**Documentation**](#-documentation) · [**Quick Start**](#-quick-start) · [**Modules**](#-modules) · [**Plugins**](#-plugin-system) · [**Contributing**](#-contributing) · [**Roadmap**](#-roadmap)
+[**Documentation**](#-documentation) · [**Quick Start**](#-quick-start) · [**Modules**](#-modules) · [**Auto-Update**](#-auto-update) · [**Plugins**](#-plugin-system) · [**Contributing**](#-contributing) · [**Roadmap**](#-roadmap)
 
 <br>
 
@@ -78,7 +78,7 @@ sudo ./recon-kit.sh -t target.com -m all
 <td align="center">🔍 WHOIS</td>
 <td align="center"><code>whois</code></td>
 <td align="center">whois</td>
-<td>Registrar, creation/expiry dates, nameservers, abuse contacts</td>
+<td>Registrar, creation/expiry dates, nameservers — auto-extracts root domain from subdomains</td>
 </tr>
 <tr>
 <td align="center">🌐 DNS</td>
@@ -187,6 +187,75 @@ Every failure is timestamped and logged to `recon.log`. Nothing is swallowed.
 
 ---
 
+## 🔄 Auto-Update
+
+recon-kit includes a built-in update system with backup and rollback support — no manual file replacement needed.
+
+### Commands
+
+```bash
+# Check and apply latest update interactively
+./recon-kit.sh --update
+
+# Check for updates without installing
+./recon-kit.sh --check
+
+# Roll back to a previous version from backup
+./recon-kit.sh --rollback
+
+# Run the update module standalone
+bash update.sh
+bash update.sh --check
+bash update.sh --rollback
+```
+
+### How it works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    UPDATE SAFETY CHAIN                      │
+├──────┬──────────────────────────────────────────────────────┤
+│  01  │  Fetch latest release tag from GitHub API            │
+│  02  │  Show changelog between current → latest             │
+│  03  │  Backup current version with timestamp               │
+│  04  │  Download new version to /tmp                        │
+│  05  │  Validate bash syntax  (bash -n)                     │
+│  06  │  Verify VERSION= matches release tag                 │
+│  07  │  Replace script · if fails → auto-restore backup     │
+└──────┴──────────────────────────────────────────────────────┘
+```
+
+### Silent background check
+
+On every launch, recon-kit silently checks for updates **once per 24 hours** in a background process — no delay on startup. If a new version is available, a notice appears alongside the banner:
+
+```
+ ┌────────────────────────────────────────────────────────┐
+ │  Update available: 2.1.0 → 2.2.0                      │
+ │  Run: ./recon-kit.sh --update                          │
+ │  krypthane.workernova.workers.dev                      │
+ └────────────────────────────────────────────────────────┘
+```
+
+### Rollback
+
+Every update creates a timestamped backup. The `--rollback` flag shows an interactive menu to restore any previous version:
+
+```bash
+./recon-kit.sh --rollback
+
+  Available backups:
+  ──────────────────────────────────────────────────────────
+  1) recon-kit_backup_20260321_172135.sh  (v2.0.0)
+  2) recon-kit_backup_20260318_091020.sh  (v1.0.0)
+  ──────────────────────────────────────────────────────────
+  [>] Select backup (1-2):
+```
+
+<br>
+
+---
+
 ## 🔌 Plugin System
 
 Extend recon-kit without touching the core. Drop any `.sh` file into `~/.recon-kit/plugins/` — it loads automatically on startup.
@@ -200,16 +269,8 @@ Extend recon-kit without touching the core. Drop any `.sh` file into `~/.recon-k
 
 plugin_mymodule() {
   section "MY MODULE — $TARGET"
-
-  # Core UI functions for consistent output:
-  # log()  → green  success
-  # info() → cyan   info
-  # warn() → yellow warning
-  # err()  → red    error
-  # act()  → purple action
-
+  # log() info() warn() err() act() for consistent output
   local out="$OUTPUT_DIR/plugins/mymodule.txt"
-  # your logic here
   log "Done → $out"
 }
 ```
@@ -238,15 +299,15 @@ Every scan produces a timestamped, self-contained output directory:
     ├── recon.log                    ← Full timestamped operation log
     │
     ├── whois/
-    │   └── whois.txt
+    │   └── whois.txt                ← Queried against root domain
     │
     ├── dns/
     │   ├── records.txt              ← All DNS record types
     │   └── axfr.txt                 ← Zone transfer result
     │
     ├── subdomains/
-    │   ├── subfinder.txt            ← Passive discovery
-    │   ├── bruteforce.txt           ← Active brute force hits
+    │   ├── subfinder.txt
+    │   ├── bruteforce.txt
     │   └── all.txt                  ← Deduplicated master list
     │
     ├── nmap/
@@ -255,15 +316,15 @@ Every scan produces a timestamped, self-contained output directory:
     │   └── udp.txt                  ← UDP top 100 (root only)
     │
     ├── web/
-    │   ├── whatweb.txt              ← Technology fingerprint
-    │   └── live_hosts.txt           ← Live subdomains (httpx)
+    │   ├── whatweb.txt
+    │   └── live_hosts.txt
     │
     ├── headers/
     │   ├── https.txt / http.txt
     │   └── security_audit.txt       ← Missing headers report
     │
     ├── cert/
-    │   └── cert.txt                 ← Full certificate details
+    │   └── cert.txt
     │
     └── plugins/                     ← Output from custom plugins
 ```
@@ -307,7 +368,7 @@ Every scan produces a timestamped, self-contained output directory:
 | Module reference | [docs/modules.md](docs/modules.md) |
 | Plugin development | [wiki/plugins](https://github.com/wavegxz-design/recon-kit/wiki/plugins) |
 | AUTOFIX internals | [docs/autofix.md](docs/autofix.md) |
-| Configuration | [docs/config.md](docs/config.md) |
+| Update system | [docs/update.md](docs/update.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |
 
 <br>
@@ -316,12 +377,12 @@ Every scan produces a timestamped, self-contained output directory:
 
 ## 🛣️ Roadmap
 
-**v2.1 — Q2 2026**
+**v2.2**
 - [ ] Shodan / Censys API integration module
 - [ ] Nuclei vulnerability scanning module
 - [ ] Telegram / Slack notification on scan complete
 
-**v3.0 — Q3 2026**
+**v3.0**
 - [ ] HTML report with charts and graphs
 - [ ] Screenshot capture via gowitness
 - [ ] Docker container release
@@ -341,18 +402,12 @@ Contributions are welcome — from bug reports to new modules and plugins.
 **Before opening a PR, read [CONTRIBUTING.md](CONTRIBUTING.md).**
 
 ```bash
-# 1. Fork and clone
 git clone https://github.com/YOUR_USERNAME/recon-kit
 cd recon-kit
-
-# 2. Create your branch
 git checkout -b feat/your-feature-name
-
-# 3. Commit with conventional format
-git commit -m "feat: clear description of what you added"
-
-# 4. Push and open PR
+git commit -m "feat: clear description"
 git push origin feat/your-feature-name
+# → Open PR
 ```
 
 **What we accept:**
@@ -373,7 +428,7 @@ git push origin feat/your-feature-name
 <td>
 <a href="https://github.com/wavegxz-design/NEXORA-TOOLKIT"><strong>NEXORA-TOOLKIT</strong></a>
 <br><br>
-Advanced modular ADB toolkit for Android device management. Built in Bash with full logging, multi-distro install, and menu-driven interface. Supports USB and WiFi ADB, data extraction, diagnostics, and more.
+Advanced modular ADB toolkit for Android device management. Built in Bash with full logging, multi-distro install, and menu-driven interface.
 </td>
 </tr>
 </table>
@@ -392,7 +447,7 @@ Unauthorized reconnaissance may violate:
 - Ley Federal de Telecomunicaciones y Radiodifusión — México
 - Equivalent legislation in your jurisdiction
 
-The author assumes no liability for misuse. You are entirely responsible for your actions.
+The author assumes no liability for misuse.
 
 <br>
 
@@ -406,7 +461,7 @@ The author assumes no liability for misuse. You are entirely responsible for you
 
 **Built with focus by [krypthane](https://github.com/wavegxz-design)**
 
-[![Web](https://img.shields.io/badge/krypthane.dev-00ff41?style=flat-square&logo=cloudflare&logoColor=white)](https://krypthane.dev)
+[![Web](https://img.shields.io/badge/krypthane.workernova.workers.dev-00ff41?style=flat-square&logo=cloudflare&logoColor=white)](https://krypthane.workernova.workers.dev)
 [![Telegram](https://img.shields.io/badge/Telegram-00ff41?style=flat-square&logo=telegram&logoColor=white)](https://t.me/Skrylakk)
 [![Email](https://img.shields.io/badge/Proton_Mail-00ff41?style=flat-square&logo=protonmail&logoColor=white)](mailto:Workernova@proton.me)
 [![GitHub](https://img.shields.io/badge/wavegxz--design-00ff41?style=flat-square&logo=github&logoColor=white)](https://github.com/wavegxz-design)
