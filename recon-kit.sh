@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════╗
-# ║              RECON-KIT v2.0 — Reconnaissance Toolkit        ║
+# ║              RECON-KIT v2.1 — Reconnaissance Toolkit        ║
 # ║         Author  : krypthane | wavegxz-design                ║
 # ║         GitHub  : github.com/wavegxz-design/recon-kit       ║
 # ║         License : MIT                                        ║
@@ -8,10 +8,11 @@
 # ║   USE ONLY ON SYSTEMS YOU OWN OR HAVE WRITTEN PERMISSION.   ║
 # ╚══════════════════════════════════════════════════════════════╝
 
-set -euo pipefail
+# NOTE: intentionally NOT using set -euo pipefail globally
+# to avoid false AUTOFIX triggers on tools returning non-zero
 
 # ── VERSION ─────────────────────────────────────────────────────
-VERSION="2.0.0"
+VERSION="2.1.0"
 RECON_KIT_DIR="$HOME/.recon-kit"
 PLUGINS_DIR="$RECON_KIT_DIR/plugins"
 CACHE_DIR="$RECON_KIT_DIR/cache"
@@ -26,7 +27,7 @@ OK="${G}[✔]${N}"   ERR="${R}[✘]${N}"  INF="${C}[*]${N}"
 WRN="${Y}[!]${N}"  ACT="${M}[→]${N}"  FIX="${B}[⚙]${N}"
 
 # ══════════════════════════════════════════════════════════════════
-# UI
+# UI HELPERS
 # ══════════════════════════════════════════════════════════════════
 banner() {
   clear
@@ -40,7 +41,7 @@ cat << 'EOF'
   ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝      ╚═╝  ╚═╝╚═╝   ╚═╝
 EOF
   echo -e "${N}  ${W}v${VERSION}${N} ${DIM}|${N} ${C}krypthane${N} ${DIM}|${N} ${Y}github.com/wavegxz-design/recon-kit${N}"
-  echo -e "  ${DIM}Modular Recon Toolkit — For authorized penetration testing only${N}"
+  echo -e "  ${DIM}Modular Recon Toolkit — Authorized penetration testing only${N}"
   echo -e "  ${R}[!] Unauthorized use is illegal. You are responsible for your actions.${N}"
   sep_full
 }
@@ -48,12 +49,12 @@ EOF
 sep_full() { echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"; }
 sep()      { echo -e "${DIM}──────────────────────────────────────────────────────────────${N}"; }
 
-log()     { echo -e " ${OK} ${W}$*${N}"    | tee -a "$LOG_FILE"; }
-info()    { echo -e " ${INF} $*"           | tee -a "$LOG_FILE"; }
-warn()    { echo -e " ${WRN} ${Y}$*${N}"   | tee -a "$LOG_FILE"; }
-err()     { echo -e " ${ERR} ${R}$*${N}"   | tee -a "$LOG_FILE"; }
-act()     { echo -e " ${ACT} ${C}$*${N}"   | tee -a "$LOG_FILE"; }
-fix()     { echo -e " ${FIX} ${B}$*${N}"   | tee -a "$LOG_FILE"; }
+log()      { echo -e " ${OK} ${W}$*${N}"  | tee -a "$LOG_FILE"; }
+info()     { echo -e " ${INF} $*"         | tee -a "$LOG_FILE"; }
+warn()     { echo -e " ${WRN} ${Y}$*${N}" | tee -a "$LOG_FILE"; }
+err()      { echo -e " ${ERR} ${R}$*${N}" | tee -a "$LOG_FILE"; }
+act()      { echo -e " ${ACT} ${C}$*${N}" | tee -a "$LOG_FILE"; }
+fix()      { echo -e " ${FIX} ${B}$*${N}" | tee -a "$LOG_FILE"; }
 
 section() {
   echo "" | tee -a "$LOG_FILE"
@@ -74,38 +75,46 @@ header_box() {
 spinner() {
   local pid=$1 msg=${2:-"Working..."}
   local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-  local i=0
+  local si=0  # FIX: renamed from i to si — avoids polluting caller scope
   while kill -0 "$pid" 2>/dev/null; do
-    printf "\r  ${C}${spin:i++%${#spin}:1}${N}  ${DIM}%s${N}" "$msg"
+    printf "\r  ${C}${spin:si++%${#spin}:1}${N}  ${DIM}%s${N}" "$msg"
     sleep 0.08
   done
   printf "\r%*s\r" 60 ""
 }
 
+# FIX: all loop vars declared local — was leaking `i` into caller scope
 progress_bar() {
   local cur=$1 tot=$2 lbl=${3:-""}
-  local w=40
-  local pct=$(( cur * 100 / tot ))
-  local fill=$(( cur * w / tot ))
-  local bar=""
-  for ((i=0;i<fill;i++));  do bar+="█"; done
-  for ((i=fill;i<w;i++));  do bar+="░"; done
+  local w=40 pct fill bar="" local_i  # FIX: local_i instead of bare i
+
+  # Guard: avoid division by zero
+  if [[ "$tot" -le 0 ]]; then
+    printf "\r  ${G}[%s]${N} ${W}%3d%%${N}  ${DIM}%s${N}" "$(printf '█%.0s' $(seq 1 $w))" 100 "$lbl"
+    return
+  fi
+
+  pct=$(( cur * 100 / tot ))
+  # Cap at 100 to avoid overflow display
+  [[ $pct -gt 100 ]] && pct=100
+  fill=$(( cur * w / tot ))
+  [[ $fill -gt $w ]] && fill=$w
+
+  for ((local_i=0; local_i<fill; local_i++));    do bar+="█"; done
+  for ((local_i=fill; local_i<w; local_i++));    do bar+="░"; done
+
   printf "\r  ${G}[%s]${N} ${W}%3d%%${N}  ${DIM}%s${N}" "$bar" "$pct" "$lbl"
 }
 
 # ══════════════════════════════════════════════════════════════════
 # DISTRO DETECTION
 # ══════════════════════════════════════════════════════════════════
-DISTRO=""
-PKG_MANAGER=""
-PKG_INSTALL=""
-PKG_UPDATE=""
-DISTRO_FAMILY=""
+DISTRO="" PKG_MANAGER="" PKG_INSTALL="" PKG_UPDATE="" DISTRO_FAMILY=""
 
 detect_distro() {
   header_box "System Detection"
-
   local os_id="" os_like="" os_name=""
+
   if [[ -f /etc/os-release ]]; then
     os_id=$(grep ^ID= /etc/os-release | cut -d= -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]')
     os_like=$(grep ^ID_LIKE= /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]' || true)
@@ -117,23 +126,18 @@ detect_distro() {
   case "$os_id" in
     kali|parrot|parrotsec|debian|ubuntu|linuxmint|mint|pop)
       DISTRO_FAMILY="debian"
-      PKG_MANAGER="apt"; PKG_INSTALL="apt install -y"; PKG_UPDATE="apt update -qq"
-      ;;
+      PKG_MANAGER="apt"; PKG_INSTALL="apt install -y"; PKG_UPDATE="apt update -qq" ;;
     blackarch|arch|manjaro|endeavouros)
       DISTRO_FAMILY="arch"
-      PKG_MANAGER="pacman"; PKG_INSTALL="pacman -S --noconfirm"; PKG_UPDATE="pacman -Sy"
-      ;;
+      PKG_MANAGER="pacman"; PKG_INSTALL="pacman -S --noconfirm"; PKG_UPDATE="pacman -Sy" ;;
     fedora|centos|rhel|rocky|almalinux)
       DISTRO_FAMILY="rhel"
-      PKG_MANAGER="dnf"; PKG_INSTALL="dnf install -y"; PKG_UPDATE="dnf check-update -q || true"
-      ;;
+      PKG_MANAGER="dnf"; PKG_INSTALL="dnf install -y"; PKG_UPDATE="dnf check-update -q || true" ;;
     opensuse*|sles)
       DISTRO_FAMILY="suse"
-      PKG_MANAGER="zypper"; PKG_INSTALL="zypper install -y"; PKG_UPDATE="zypper refresh"
-      ;;
+      PKG_MANAGER="zypper"; PKG_INSTALL="zypper install -y"; PKG_UPDATE="zypper refresh" ;;
     *)
-      # Fallback via ID_LIKE
-      if echo "$os_like" | grep -qi "debian\|ubuntu"; then
+      if   echo "$os_like" | grep -qi "debian\|ubuntu"; then
         DISTRO_FAMILY="debian"; PKG_MANAGER="apt"
         PKG_INSTALL="apt install -y"; PKG_UPDATE="apt update -qq"
       elif echo "$os_like" | grep -qi "arch"; then
@@ -146,8 +150,7 @@ detect_distro() {
         err "Unsupported distro: $os_id"
         err "Supported: Kali, Parrot, BlackArch, Ubuntu, Debian, Mint, Fedora, CentOS/RHEL, Arch, Manjaro, openSUSE"
         exit 1
-      fi
-      ;;
+      fi ;;
   esac
 
   DISTRO="$os_id"
@@ -157,32 +160,32 @@ detect_distro() {
 }
 
 # ══════════════════════════════════════════════════════════════════
-# PACKAGE NAMES PER FAMILY
+# PACKAGE MAP
 # ══════════════════════════════════════════════════════════════════
 get_pkg() {
   local tool=$1
   case "$DISTRO_FAMILY" in
     debian) case "$tool" in
-      nmap) echo "nmap" ;; whois) echo "whois" ;; dig) echo "dnsutils" ;;
-      curl) echo "curl" ;; wget) echo "wget"   ;; whatweb) echo "whatweb" ;;
-      openssl) echo "openssl" ;; tcpdump) echo "tcpdump" ;;
+      nmap) echo "nmap"       ;; whois) echo "whois"      ;; dig) echo "dnsutils" ;;
+      curl) echo "curl"       ;; wget) echo "wget"        ;; whatweb) echo "whatweb" ;;
+      openssl) echo "openssl" ;; tcpdump) echo "tcpdump"  ;;
       subfinder|httpx|nuclei|ffuf) echo "__go__" ;; *) echo "$tool" ;;
     esac ;;
     rhel) case "$tool" in
-      nmap) echo "nmap" ;; whois) echo "whois" ;; dig) echo "bind-utils" ;;
-      curl) echo "curl" ;; wget) echo "wget"   ;; whatweb) echo "__gem__" ;;
-      openssl) echo "openssl" ;; tcpdump) echo "tcpdump" ;;
+      nmap) echo "nmap"       ;; whois) echo "whois"      ;; dig) echo "bind-utils" ;;
+      curl) echo "curl"       ;; wget) echo "wget"        ;; whatweb) echo "__gem__" ;;
+      openssl) echo "openssl" ;; tcpdump) echo "tcpdump"  ;;
       subfinder|httpx|nuclei|ffuf) echo "__go__" ;; *) echo "$tool" ;;
     esac ;;
     arch) case "$tool" in
-      nmap) echo "nmap" ;; whois) echo "whois" ;; dig) echo "bind" ;;
-      curl) echo "curl" ;; wget) echo "wget"   ;; whatweb) echo "whatweb" ;;
-      openssl) echo "openssl" ;; tcpdump) echo "tcpdump" ;;
+      nmap) echo "nmap"       ;; whois) echo "whois"      ;; dig) echo "bind" ;;
+      curl) echo "curl"       ;; wget) echo "wget"        ;; whatweb) echo "whatweb" ;;
+      openssl) echo "openssl" ;; tcpdump) echo "tcpdump"  ;;
       subfinder|httpx|nuclei|ffuf) echo "__go__" ;; *) echo "$tool" ;;
     esac ;;
     suse) case "$tool" in
-      nmap) echo "nmap" ;; whois) echo "whois" ;; dig) echo "bind-utils" ;;
-      curl) echo "curl" ;; wget) echo "wget"   ;; openssl) echo "openssl" ;;
+      nmap) echo "nmap"       ;; whois) echo "whois"      ;; dig) echo "bind-utils" ;;
+      curl) echo "curl"       ;; wget) echo "wget"        ;; openssl) echo "openssl" ;;
       subfinder|httpx|nuclei|ffuf) echo "__go__" ;; *) echo "$tool" ;;
     esac ;;
   esac
@@ -207,16 +210,17 @@ install_go_tool() {
   local tool=$1
   local gopkg="${GO_TOOLS[$tool]:-}"
   [[ -z "$gopkg" ]] && return 1
-  command -v go &>/dev/null || sudo $PKG_INSTALL golang &>/dev/null
-  go install "$gopkg" &>/dev/null && export PATH="$PATH:$(go env GOPATH)/bin"
+  command -v go &>/dev/null || sudo $PKG_INSTALL golang &>/dev/null || return 1
+  go install "$gopkg" &>/dev/null && export PATH="$PATH:$(go env GOPATH)/bin" && return 0
+  return 1
 }
 
 autofix() {
   local tool=$1
   fix "AUTOFIX: ${W}$tool${N}"
+  local pkg; pkg=$(get_pkg "$tool")
 
   # Step 1 — reinstall
-  local pkg; pkg=$(get_pkg "$tool")
   if [[ "$pkg" == "__go__" ]]; then
     install_go_tool "$tool" && log "$tool installed via Go" && return 0
   elif [[ "$pkg" == "__gem__" ]]; then
@@ -232,28 +236,29 @@ autofix() {
     sudo chmod +x "$tp" && log "Permissions fixed: $tp" && return 0
   fi
 
-  # Step 3 — suggest alternative
+  # Step 3 — alternative
   local alt="${TOOL_ALT[$tool]:-}"
   if [[ -n "$alt" ]] && command -v "$alt" &>/dev/null; then
-    warn "$tool unavailable → using alternative: ${W}$alt${N}"
+    warn "$tool unavailable → using: ${W}$alt${N}"
     echo "$alt" > "$CACHE_DIR/alt_${tool}"
     return 0
   fi
 
-  # Step 4 — retry with fix-missing (debian)
+  # Step 4 — retry with fix-missing
   if [[ "$DISTRO_FAMILY" == "debian" ]]; then
     fix "Retry with --fix-missing..."
     sudo apt-get install -y --fix-missing "$pkg" &>/dev/null && return 0
   fi
 
-  err "AUTOFIX failed for $tool — module will be skipped"
+  err "AUTOFIX failed for $tool — module skipped"
   return 1
 }
 
+# FIX: only trigger autofix if tool is actually missing after check
 check_tool() {
   local tool=$1 required=${2:-false}
   if command -v "$tool" &>/dev/null; then
-    log "Found   : ${C}$tool${N}  $(command -v $tool)"
+    log "Found   : ${C}$tool${N}  $(command -v "$tool")"
     return 0
   fi
   warn "Missing : ${Y}$tool${N}"
@@ -261,7 +266,7 @@ check_tool() {
     act "Auto-installing: $tool"
     autofix "$tool" || true
   else
-    echo -ne "  ${INF} Install optional ${W}$tool${N}? [y/N] "
+    printf "  ${INF} Install optional ${W}%s${N}? [y/N] " "$tool"
     read -r ans
     [[ "$ans" =~ ^[Yy]$ ]] && autofix "$tool" || warn "Skipping $tool"
   fi
@@ -270,7 +275,9 @@ check_tool() {
 run_deps() {
   header_box "Dependency Check & Auto-Install"
   act "Updating package cache..."
-  sudo $PKG_UPDATE &>/dev/null & spinner $! "Updating ${PKG_MANAGER}..."
+  # FIX: run update in subshell so failure doesn't affect rest
+  (sudo $PKG_UPDATE &>/dev/null) &
+  spinner $! "Updating ${PKG_MANAGER}..."
   log "Cache updated"
   echo ""
   info "${W}Required:${N}"
@@ -293,7 +300,7 @@ THREADS=10
 TIMEOUT=30
 AUTO_INSTALL=true
 AUTO_FIX=true
-USER_AGENT="recon-kit/2.0 (github.com/wavegxz-design/recon-kit)"
+USER_AGENT="recon-kit/2.1 (github.com/wavegxz-design/recon-kit)"
 CFG
 }
 
@@ -302,8 +309,8 @@ load_plugins() {
   compgen -G "$PLUGINS_DIR/*.sh" &>/dev/null || return 0
   for p in "$PLUGINS_DIR"/*.sh; do
     # shellcheck source=/dev/null
-    source "$p" 2>/dev/null && { count=$((count+1)); info "Plugin: ${C}$(basename $p)${N}"; } \
-      || warn "Plugin failed: $(basename $p)"
+    source "$p" 2>/dev/null && { count=$((count+1)); info "Plugin: ${C}$(basename "$p")${N}"; } \
+      || warn "Plugin failed: $(basename "$p")"
   done
   [[ $count -gt 0 ]] && log "$count plugin(s) loaded"
 }
@@ -313,7 +320,6 @@ list_plugins() {
   compgen -G "$PLUGINS_DIR/*.sh" &>/dev/null || {
     info "No plugins installed."
     info "Drop .sh files into: ${C}$PLUGINS_DIR${N}"
-    info "Community plugins: ${Y}github.com/wavegxz-design/recon-kit/wiki/plugins${N}"
     return
   }
   for p in "$PLUGINS_DIR"/*.sh; do
@@ -329,6 +335,19 @@ list_plugins() {
 TARGET="" OUTPUT_DIR="" MODULES=()
 LOG_FILE="/tmp/recon-kit.log"
 START_TIME=$(date +%s)
+
+# FIX: extract root domain for whois (handles subdomains correctly)
+get_root_domain() {
+  local host="$1"
+  # Strip leading digits/protocol if present
+  host="${host#http://}"; host="${host#https://}"; host="${host%%/*}"
+  # Extract last two parts (root domain)
+  echo "$host" | awk -F. '{
+    n=NF
+    if(n>=2) print $(n-1)"."$n
+    else print $0
+  }'
+}
 
 setup_output() {
   local ts; ts=$(date +%Y%m%d_%H%M%S)
@@ -347,14 +366,36 @@ setup_output() {
 # ══════════════════════════════════════════════════════════════════
 # MODULES
 # ══════════════════════════════════════════════════════════════════
+
 module_whois() {
   section "WHOIS — $TARGET"
   local out="$OUTPUT_DIR/whois/whois.txt"
-  whois "$TARGET" > "$out" 2>/dev/null || autofix whois
-  log "Registrar : ${C}$(grep -i 'registrar:' "$out" 2>/dev/null | head -1 | cut -d: -f2- | xargs || echo N/A)${N}"
-  log "Created   : ${C}$(grep -iE 'creation date|created:' "$out" 2>/dev/null | head -1 | awk '{print $NF}' || echo N/A)${N}"
-  log "Expires   : ${C}$(grep -iE 'expir' "$out" 2>/dev/null | head -1 | awk '{print $NF}' || echo N/A)${N}"
-  log "NS        : ${C}$(grep -iE 'name server|nserver' "$out" 2>/dev/null | head -3 | awk '{print $NF}' | tr '\n' ' ' || echo N/A)${N}"
+
+  # FIX: use root domain for whois — subdomains return empty results
+  local root_domain; root_domain=$(get_root_domain "$TARGET")
+  if [[ "$root_domain" != "$TARGET" ]]; then
+    info "Subdomain detected — querying root domain: ${W}$root_domain${N}"
+  fi
+
+  # FIX: run whois safely, only autofix if binary is actually missing
+  if ! command -v whois &>/dev/null; then
+    autofix whois
+  fi
+
+  whois "$root_domain" > "$out" 2>/dev/null || {
+    warn "whois returned no data for $root_domain"
+    echo "No whois data" > "$out"
+  }
+
+  local registrar; registrar=$(grep -i 'registrar:' "$out" 2>/dev/null | head -1 | cut -d: -f2- | xargs || echo "N/A")
+  local created;   created=$(grep -iE 'creation date|created:' "$out" 2>/dev/null | head -1 | awk '{print $NF}' || echo "N/A")
+  local expires;   expires=$(grep -iE 'expir' "$out" 2>/dev/null | head -1 | awk '{print $NF}' || echo "N/A")
+  local ns;        ns=$(grep -iE 'name server|nserver' "$out" 2>/dev/null | head -3 | awk '{print $NF}' | tr '\n' ' ' || echo "N/A")
+
+  log "Registrar : ${C}${registrar:-N/A}${N}"
+  log "Created   : ${C}${created:-N/A}${N}"
+  log "Expires   : ${C}${expires:-N/A}${N}"
+  log "NS        : ${C}${ns:-N/A}${N}"
   info "Full → $out"
 }
 
@@ -362,31 +403,39 @@ module_dns() {
   section "DNS Enumeration — $TARGET"
   local out="$OUTPUT_DIR/dns/records.txt"
   local types=("A" "AAAA" "MX" "NS" "TXT" "SOA" "CNAME" "SRV" "CAA")
+
   for rtype in "${types[@]}"; do
+    # FIX: capture result safely, ignore errors
     local res; res=$(dig +short "$rtype" "$TARGET" 2>/dev/null || true)
     if [[ -n "$res" ]]; then
-      printf "%-8s %s\n" "[$rtype]" "$res" | tee -a "$out"
-      log "$(printf '%-6s' $rtype): ${C}$res${N}"
+      printf "%-8s %s\n" "[$rtype]" "$res" >> "$out"
+      log "$(printf '%-6s' "$rtype"): ${C}$res${N}"
     fi
   done
-  # DMARC
+
+  # DMARC check
   local dmarc; dmarc=$(dig +short TXT "_dmarc.$TARGET" 2>/dev/null || true)
   [[ -n "$dmarc" ]] && log "DMARC : ${C}$dmarc${N}"
+
   # Zone transfer
-  info "Zone transfer attempt..."
+  info "Zone transfer attempt (AXFR)..."
   local ns; ns=$(dig +short NS "$TARGET" 2>/dev/null | head -1 || true)
   if [[ -n "$ns" ]]; then
-    dig AXFR "$TARGET" "@$ns" > "$OUTPUT_DIR/dns/axfr.txt" 2>/dev/null
+    dig AXFR "$TARGET" "@$ns" > "$OUTPUT_DIR/dns/axfr.txt" 2>/dev/null || true
     local lines; lines=$(wc -l < "$OUTPUT_DIR/dns/axfr.txt" 2>/dev/null || echo 0)
-    [[ $lines -gt 5 ]] && warn "Zone transfer SUCCEEDED → $OUTPUT_DIR/dns/axfr.txt" \
-                       || info "Zone transfer blocked (normal)"
+    [[ $lines -gt 5 ]] \
+      && warn "Zone transfer SUCCEEDED → $OUTPUT_DIR/dns/axfr.txt" \
+      || info "Zone transfer blocked (normal)"
+  else
+    info "No NS record found — zone transfer skipped"
   fi
 }
 
 module_subdomains() {
   section "Subdomain Enumeration — $TARGET"
   local out="$OUTPUT_DIR/subdomains"
-  local i=0
+  # FIX: sub_i is strictly local — never leaks into progress_bar
+  local sub_i=0
 
   # subfinder
   if command -v subfinder &>/dev/null; then
@@ -394,39 +443,58 @@ module_subdomains() {
     subfinder -d "$TARGET" -silent -o "$out/subfinder.txt" 2>/dev/null &
     spinner $! "subfinder scanning $TARGET..."
     log "subfinder: ${G}$(wc -l < "$out/subfinder.txt" 2>/dev/null || echo 0)${N} found"
+  else
+    warn "subfinder not available — skipping passive discovery"
   fi
 
   # Common brute force
   act "Common subdomain brute force..."
-  local common=("www" "mail" "ftp" "admin" "api" "dev" "staging" "vpn" "remote"
+  local common=(
+    "www" "mail" "ftp" "admin" "api" "dev" "staging" "vpn" "remote"
     "test" "portal" "dashboard" "cdn" "blog" "shop" "app" "mobile" "beta"
     "backup" "git" "jenkins" "grafana" "kibana" "jira" "wiki" "smtp"
-    "ns1" "ns2" "mx" "relay" "webmail" "cpanel" "autodiscover")
+    "ns1" "ns2" "mx" "relay" "webmail" "cpanel" "autodiscover"
+  )
   local total=${#common[@]} found=0
+
   for sub in "${common[@]}"; do
-    i=$((i+1))
-    progress_bar $i $total "Checking ${sub}.${TARGET}"
+    sub_i=$((sub_i + 1))
+    progress_bar "$sub_i" "$total" "Checking ${sub}.${TARGET}"
     local res; res=$(dig +short A "${sub}.${TARGET}" 2>/dev/null || true)
     if [[ -n "$res" ]]; then
       echo "${sub}.${TARGET} → $res" >> "$out/bruteforce.txt"
-      found=$((found+1))
+      found=$((found + 1))
     fi
   done
-  echo ""
+  echo ""  # newline after progress bar
   log "Brute force: ${G}$found${N} found"
 
   # Merge
-  cat "$out"/*.txt 2>/dev/null | grep -oP "[\w\-\.]+\.${TARGET}" | sort -u > "$out/all.txt" || true
-  log "Total unique: ${G}$(wc -l < "$out/all.txt" 2>/dev/null || echo 0)${N} → $out/all.txt"
+  cat "$out"/*.txt 2>/dev/null \
+    | grep -oP "[\w\-\.]+\.${TARGET//./\\.}" 2>/dev/null \
+    | sort -u > "$out/all.txt" || true
+
+  local total_found; total_found=$(wc -l < "$out/all.txt" 2>/dev/null || echo 0)
+  log "Total unique: ${G}$total_found${N} → $out/all.txt"
 }
 
 module_portscan() {
   section "Port Scan — $TARGET"
   local out="$OUTPUT_DIR/nmap"
 
+  # FIX: only autofix if nmap is actually missing
+  if ! command -v nmap &>/dev/null; then
+    autofix nmap
+  fi
+
   act "Quick scan — top 1000 ports..."
-  nmap -sV --open -T4 -oN "$out/quick.txt" -oX "$out/quick.xml" "$TARGET" 2>/dev/null \
-    | grep -E "^[0-9]+|Nmap scan|open" | tee -a "$LOG_FILE" || autofix nmap
+  # FIX: run nmap safely, capture output without triggering pipefail
+  local nmap_out
+  nmap_out=$(nmap -sV --open -T4 "$TARGET" 2>/dev/null) || {
+    warn "nmap returned non-zero — target may be unreachable"
+  }
+  echo "$nmap_out" > "$out/quick.txt"
+  nmap -sV --open -T4 -oX "$out/quick.xml" "$TARGET" &>/dev/null || true
 
   act "Full TCP scan (background — all 65535 ports)..."
   nmap -sV -p- --open -T3 -oN "$out/full.txt" "$TARGET" &>/dev/null &
@@ -441,9 +509,15 @@ module_portscan() {
   fi
 
   echo ""
-  info "${W}Open ports:${N}"
-  grep "^[0-9]" "$out/quick.txt" 2>/dev/null \
-    | while read -r line; do echo -e "  ${G}→${N} $line"; done | tee -a "$LOG_FILE"
+  info "${W}Open ports (quick scan):${N}"
+  local open_count=0
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[0-9]+.*open ]]; then
+      echo -e "  ${G}→${N} $line" | tee -a "$LOG_FILE"
+      open_count=$((open_count + 1))
+    fi
+  done < "$out/quick.txt"
+  [[ $open_count -eq 0 ]] && warn "No open ports found — target may be unreachable or filtered"
 }
 
 module_web() {
@@ -452,43 +526,45 @@ module_web() {
   local hout="$OUTPUT_DIR/headers"
   local url="https://${TARGET}"
 
-  act "Grabbing headers..."
-  curl -sIL --max-time 15 "$url"            > "$hout/https.txt" 2>/dev/null || true
-  curl -sIL --max-time 15 "http://$TARGET"  > "$hout/http.txt"  2>/dev/null || true
+  act "Grabbing HTTP/S headers..."
+  curl -sIL --max-time 15 "$url"           > "$hout/https.txt" 2>/dev/null || true
+  curl -sIL --max-time 15 "http://$TARGET" > "$hout/http.txt"  2>/dev/null || true
 
   info "${W}Security headers audit:${N}"
-  local headers=("Strict-Transport-Security" "Content-Security-Policy"
+  local sec_headers=(
+    "Strict-Transport-Security" "Content-Security-Policy"
     "X-Frame-Options" "X-Content-Type-Options" "Referrer-Policy"
-    "Permissions-Policy" "X-XSS-Protection" "Cross-Origin-Opener-Policy")
+    "Permissions-Policy" "X-XSS-Protection" "Cross-Origin-Opener-Policy"
+  )
   local present=0 missing=0
-  for h in "${headers[@]}"; do
+  for h in "${sec_headers[@]}"; do
     if grep -qi "$h" "$hout/https.txt" 2>/dev/null; then
-      echo -e "  ${G}[PRESENT]${N} $h" | tee -a "$LOG_FILE"; ((present++))
+      echo -e "  ${G}[PRESENT]${N} $h" | tee -a "$LOG_FILE"; ((present++)) || true
     else
-      echo -e "  ${R}[MISSING]${N} $h" | tee -a "$LOG_FILE"; ((missing++))
+      echo -e "  ${R}[MISSING]${N} $h" | tee -a "$LOG_FILE"; ((missing++)) || true
     fi
   done
   log "Headers: ${G}$present present${N} / ${R}$missing missing${N}"
 
   command -v whatweb &>/dev/null && {
     act "WhatWeb detection..."
-    whatweb -a 3 "$url" > "$out/whatweb.txt" 2>/dev/null
+    whatweb -a 3 "$url" > "$out/whatweb.txt" 2>/dev/null || true
     log "Tech → $out/whatweb.txt"
   }
 
   act "Common files check..."
   for p in "robots.txt" "sitemap.xml" ".well-known/security.txt" "crossdomain.xml" "humans.txt"; do
-    local code; code=$(curl -so /dev/null -w "%{http_code}" --max-time 8 "${url}/${p}" 2>/dev/null || echo 000)
-    [[ "$code" == "200" ]] && {
-      curl -s --max-time 8 "${url}/${p}" > "$out/${p//\//_}" 2>/dev/null
-      log "Found: /${p} ${G}[200]${N}"
-    }
+    local code; code=$(curl -so /dev/null -w "%{http_code}" --max-time 8 "${url}/${p}" 2>/dev/null || echo "000")
+    if [[ "$code" == "200" ]]; then
+      curl -s --max-time 8 "${url}/${p}" > "$out/${p//\//_}" 2>/dev/null || true
+      log "Found: /${p} ${G}[$code]${N}"
+    fi
   done
 
   command -v httpx &>/dev/null && [[ -f "$OUTPUT_DIR/subdomains/all.txt" ]] && {
     act "Probing live subdomains..."
     httpx -l "$OUTPUT_DIR/subdomains/all.txt" -silent -status-code -title \
-      > "$out/live_hosts.txt" 2>/dev/null
+      > "$out/live_hosts.txt" 2>/dev/null || true
     log "Live hosts: ${G}$(wc -l < "$out/live_hosts.txt" 2>/dev/null || echo 0)${N}"
   }
 }
@@ -497,9 +573,15 @@ module_cert() {
   section "SSL/TLS Certificate — $TARGET"
   local out="$OUTPUT_DIR/cert/cert.txt"
 
-  echo | timeout 10 openssl s_client -connect "${TARGET}:443" \
-    -servername "$TARGET" 2>/dev/null | openssl x509 -noout -text > "$out" 2>/dev/null || {
-    autofix openssl; warn "Could not retrieve certificate"; return
+  if ! command -v openssl &>/dev/null; then
+    autofix openssl
+  fi
+
+  echo | timeout 10 openssl s_client \
+    -connect "${TARGET}:443" -servername "$TARGET" 2>/dev/null \
+    | openssl x509 -noout -text > "$out" 2>/dev/null || {
+    warn "Could not retrieve certificate — target may not have HTTPS"
+    return
   }
 
   log "Subject : ${C}$(grep 'Subject:' "$out" 2>/dev/null | head -1 | xargs)${N}"
@@ -507,12 +589,16 @@ module_cert() {
   log "Expires : ${C}$(grep 'Not After' "$out" 2>/dev/null | head -1 | xargs)${N}"
   log "SANs    : ${C}$(grep -A2 'Subject Alternative Name' "$out" 2>/dev/null | tail -1 | xargs)${N}"
 
-  local exp; exp=$(grep "Not After" "$out" 2>/dev/null | cut -d: -f2- | xargs)
+  local exp; exp=$(grep "Not After" "$out" 2>/dev/null | cut -d: -f2- | xargs || true)
   if [[ -n "$exp" ]]; then
     local exp_e; exp_e=$(date -d "$exp" +%s 2>/dev/null || true)
-    local now_e; now_e=$(date +%s)
-    local days=$(( (exp_e - now_e) / 86400 ))
-    [[ $days -lt 30 ]] && warn "Expires in ${R}$days days!${N}" || log "Valid for ${G}$days more days${N}"
+    if [[ -n "$exp_e" ]]; then
+      local now_e; now_e=$(date +%s)
+      local days=$(( (exp_e - now_e) / 86400 ))
+      [[ $days -lt 30 ]] \
+        && warn "Certificate expires in ${R}$days days!${N}" \
+        || log "Valid for ${G}$days more days${N}"
+    fi
   fi
 }
 
@@ -522,7 +608,8 @@ module_cert() {
 generate_report() {
   local end_t; end_t=$(date +%s)
   local elapsed=$(( end_t - START_TIME ))
-  local open_ports; open_ports=$(grep -c "^[0-9]" "$OUTPUT_DIR/nmap/quick.txt" 2>/dev/null || echo 0)
+  # FIX: safe fallback on all wc/grep calls
+  local open_ports; open_ports=$(grep -c "open" "$OUTPUT_DIR/nmap/quick.txt" 2>/dev/null || echo 0)
   local subs;       subs=$(wc -l < "$OUTPUT_DIR/subdomains/all.txt" 2>/dev/null || echo 0)
   local miss_h;     miss_h=$(grep -c "\[MISSING\]" "$LOG_FILE" 2>/dev/null || echo 0)
   local report="$OUTPUT_DIR/REPORT.md"
@@ -562,13 +649,13 @@ RPT
   sep_full
   echo -e "  ${W}${BOLD}SCAN COMPLETE${N}"
   sep
-  printf "  ${INF} %-20s ${G}%s${N}\n" "Target:"    "$TARGET"
-  printf "  ${INF} %-20s ${C}%ss${N}\n" "Duration:"  "$elapsed"
-  printf "  ${INF} %-20s ${G}%s${N}\n" "Open ports:" "$open_ports"
-  printf "  ${INF} %-20s ${G}%s${N}\n" "Subdomains:" "$subs"
-  printf "  ${INF} %-20s ${R}%s${N}\n" "Missing headers:" "$miss_h"
-  printf "  ${INF} %-20s ${Y}%s${N}\n" "Output dir:"  "$OUTPUT_DIR"
-  printf "  ${INF} %-20s ${Y}%s${N}\n" "Report:"      "$report"
+  printf "  ${INF} %-22s ${G}%s${N}\n"  "Target:"          "$TARGET"
+  printf "  ${INF} %-22s ${C}%ss${N}\n" "Duration:"         "$elapsed"
+  printf "  ${INF} %-22s ${G}%s${N}\n"  "Open ports:"       "$open_ports"
+  printf "  ${INF} %-22s ${G}%s${N}\n"  "Subdomains:"       "$subs"
+  printf "  ${INF} %-22s ${R}%s${N}\n"  "Missing headers:"  "$miss_h"
+  printf "  ${INF} %-22s ${Y}%s${N}\n"  "Output:"           "$OUTPUT_DIR"
+  printf "  ${INF} %-22s ${Y}%s${N}\n"  "Report:"           "$report"
   sep_full
   echo ""
 }
@@ -591,7 +678,7 @@ show_menu() {
   echo -e "  ${C}p${N}) ${W}Plugins${N}           ${DIM}— List installed plugins${N}"
   echo -e "  ${C}q${N}) ${W}Quit${N}"
   sep
-  echo -ne "  ${G}[>]${N} Choice: "
+  printf "  ${G}[>]${N} Choice: "
   read -r choice
   case $choice in
     1) MODULES=("whois" "dns" "subdomains" "portscan" "web" "cert") ;;
@@ -602,7 +689,7 @@ show_menu() {
     6) MODULES=("web") ;;
     7) MODULES=("cert") ;;
     8)
-      echo -ne "  ${G}[>]${N} Modules ${DIM}(whois,dns,subdomains,portscan,web,cert)${N}: "
+      printf "  ${G}[>]${N} Modules ${DIM}(whois,dns,subdomains,portscan,web,cert)${N}: "
       read -r custom; IFS=',' read -ra MODULES <<< "$custom" ;;
     p) list_plugins; exit 0 ;;
     q) echo -e "\n  ${DIM}Bye.${N}\n"; exit 0 ;;
@@ -619,7 +706,7 @@ usage() {
   echo ""
   echo -e "${W}Examples:${N}"
   echo -e "  $0 -t example.com -m all"
-  echo -e "  sudo $0 -t example.com -m all   ${DIM}# enables UDP${N}"
+  echo -e "  sudo $0 -t example.com -m all    ${DIM}# enables UDP${N}"
   echo -e "${R}  Authorized targets only.${N}"
 }
 
@@ -641,7 +728,7 @@ main() {
   done
 
   [[ -z "$TARGET" ]] && {
-    echo -ne "  ${G}[>]${N} Target domain or IP: "
+    printf "  ${G}[>]${N} Target domain or IP: "
     read -r TARGET
   }
   [[ -z "$TARGET" ]] && { err "No target"; usage; exit 1; }
@@ -652,7 +739,8 @@ main() {
   load_plugins
 
   [[ ${#MODULES[@]} -eq 0 ]] && show_menu
-  [[ "${MODULES[*]}" == *"all"* ]] && MODULES=("whois" "dns" "subdomains" "portscan" "web" "cert")
+  [[ "${MODULES[*]}" == *"all"* ]] && \
+    MODULES=("whois" "dns" "subdomains" "portscan" "web" "cert")
 
   sep_full
   info "Target  : ${W}$TARGET${N}"
@@ -660,18 +748,18 @@ main() {
   info "Output  : ${Y}$OUTPUT_DIR${N}"
   sep_full
 
-  local total=${#MODULES[@]} cur=0
+  local mod_total=${#MODULES[@]} mod_cur=0
   for module in "${MODULES[@]}"; do
-    cur=$((cur+1))
-    progress_bar $cur $total "Running: $module"
+    mod_cur=$((mod_cur + 1))
+    progress_bar "$mod_cur" "$mod_total" "Running: $module"
     echo ""
     case $module in
-      whois)      module_whois ;;
-      dns)        module_dns ;;
+      whois)      module_whois      ;;
+      dns)        module_dns        ;;
       subdomains) module_subdomains ;;
-      portscan)   module_portscan ;;
-      web)        module_web ;;
-      cert)       module_cert ;;
+      portscan)   module_portscan   ;;
+      web)        module_web        ;;
+      cert)       module_cert       ;;
       *)
         declare -f "plugin_${module}" &>/dev/null \
           && "plugin_${module}" \
