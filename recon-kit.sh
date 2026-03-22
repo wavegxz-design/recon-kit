@@ -14,7 +14,7 @@
 # Unbound vars are caught per-function with explicit guards.
 
 # ── VERSION ─────────────────────────────────────────────────────
-readonly VERSION="2.1.1"
+readonly VERSION="2.1.2"
 readonly SITE="krypthane.workernova.workers.dev"
 readonly RECON_KIT_DIR="${RECON_KIT_DIR:-$HOME/.recon-kit}"
 readonly PLUGINS_DIR="$RECON_KIT_DIR/plugins"
@@ -39,6 +39,7 @@ LOG_FILE="$LOG_BOOT"
 START_TIME=$(date +%s)
 ERRORS=()       # collect non-fatal errors for final report
 WARNINGS=()     # collect warnings for final report
+WORDLIST=""     # FIX: external subdomain wordlist path (-w flag)
 
 # ══════════════════════════════════════════════════════════════════
 # TRAP & SIGNAL HANDLING
@@ -678,11 +679,11 @@ module_dns() {
 module_subdomains() {
   section "Subdomain Enumeration — $TARGET"
   local out="$OUTPUT_DIR/subdomains"
-  local sub_i=0   # FIX: strictly local — never leaks into progress_bar
+  local sub_i=0
 
-  # subfinder
+  # Passive — subfinder
   if command -v subfinder &>/dev/null; then
-    act "Running subfinder..."
+    act "Running subfinder (passive)..."
     timeout 120 subfinder -d "$TARGET" -silent -o "$out/subfinder.txt" 2>/dev/null &
     local sf_pid=$!
     spinner "$sf_pid" "subfinder scanning $TARGET..."
@@ -690,40 +691,60 @@ module_subdomains() {
     local sf_count; sf_count=$(wc -l < "$out/subfinder.txt" 2>/dev/null || echo 0)
     log "subfinder: ${G}${sf_count}${N} found"
   else
-    warn "subfinder not available — skipping passive discovery"
+    warn "subfinder not installed — go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
     touch "$out/subfinder.txt"
   fi
 
-  # Common brute force
-  act "Common subdomain brute force..."
-  local common=(
-    "www" "mail" "ftp" "admin" "api" "dev" "staging" "vpn" "remote"
-    "test" "portal" "dashboard" "cdn" "blog" "shop" "app" "mobile" "beta"
-    "backup" "git" "jenkins" "grafana" "kibana" "jira" "wiki" "smtp"
-    "ns1" "ns2" "mx" "relay" "webmail" "cpanel" "autodiscover"
-    "support" "status" "cloud" "login" "secure" "auth" "sso"
-  )
-  local total=${#common[@]} found=0
+  # FIX: external wordlist support via -w flag
+  # Usage: ./recon-kit.sh -t target.com -w /path/to/subdomains.txt
+  local -a subs_to_check=()
+  if [[ -n "${WORDLIST:-}" && -f "$WORDLIST" ]]; then
+    act "Loading wordlist: $WORDLIST"
+    while IFS= read -r _wl_line; do
+      [[ -n "$_wl_line" && "${_wl_line:0:1}" != "#" ]] && subs_to_check+=("$_wl_line")
+    done < "$WORDLIST"
+    info "Wordlist: ${G}${#subs_to_check[@]}${N} entries from $WORDLIST"
+  else
+    [[ -n "${WORDLIST:-}" ]] && warn "Wordlist not found: $WORDLIST — using built-in list"
+    subs_to_check=(
+      "www" "mail" "ftp" "admin" "api" "dev" "staging" "vpn" "remote"
+      "test" "portal" "dashboard" "cdn" "blog" "shop" "app" "mobile" "beta"
+      "backup" "git" "jenkins" "grafana" "kibana" "jira" "wiki" "smtp"
+      "ns1" "ns2" "mx" "relay" "webmail" "cpanel" "autodiscover"
+      "support" "status" "cloud" "login" "secure" "auth" "sso"
+      "m" "www2" "new" "old" "demo" "preprod" "prod" "uat" "qa"
+      "api2" "v1" "v2" "docs" "help" "forum" "community" "intranet"
+      "internal" "db" "redis" "monitor" "metrics" "logs" "elk"
+      "assets" "static" "media" "img" "files" "upload" "download"
+      "billing" "crm" "ldap" "dc1" "dc2" "proxy" "gateway" "fw"
+    )
+    info "Built-in wordlist: ${#subs_to_check[@]} subdomains"
+    info "Tip: ./recon-kit.sh -t $TARGET -w subdomains.txt for custom wordlist"
+  fi
 
-  for sub in "${common[@]}"; do
+  act "Brute forcing ${#subs_to_check[@]} subdomains..."
+  local total=${#subs_to_check[@]} found=0
+
+  for sub in "${subs_to_check[@]}"; do
     sub_i=$((sub_i + 1))
     progress_bar "$sub_i" "$total" "Checking ${sub}.${TARGET}"
     local res; res=$(timeout 5 dig +short A "${sub}.${TARGET}" 2>/dev/null || true)
     if [[ -n "$res" ]]; then
       echo "${sub}.${TARGET} → $res" >> "$out/bruteforce.txt"
+      echo -e "  ${G}[FOUND]${N}  ${G}${sub}.${TARGET}${N}  →  ${C}${res}${N}"
       found=$((found + 1))
     fi
   done
   echo ""
-  log "Brute force: ${G}${found}${N} found"
+  log "Brute force: ${G}${found}${N} active subdomains found"
 
-  # Merge and deduplicate
+  # Merge + deduplicate all sources
   cat "$out"/*.txt 2>/dev/null \
     | grep -oP "[\w\-\.]+\.${TARGET//./\\.}" 2>/dev/null \
     | sort -u > "$out/all.txt" || true
 
   local total_subs; total_subs=$(wc -l < "$out/all.txt" 2>/dev/null || echo 0)
-  log "Total unique: ${G}${total_subs}${N} → $out/all.txt"
+  log "Total unique subdomains: ${G}${total_subs}${N} → $out/all.txt"
 }
 
 # ══════════════════════════════════════════════════════════════════
@@ -737,25 +758,37 @@ module_portscan() {
   command -v nmap &>/dev/null || { err "nmap unavailable — skipping port scan"; return; }
 
   # Quick scan — top 1000 ports
-  act "Quick scan — top 1000 ports..."
+  # FIX: was &>/dev/null — user saw nothing. Now shows live port hits.
+  act "Quick scan — top 1000 ports (live output)..."
   local nmap_rc=0
+  echo ""
+
+  # Run nmap with live output, also save to file
   timeout 300 nmap -sV --open -T4 \
     -oN "$out/quick.txt" \
     -oX "$out/quick.xml" \
-    "$TARGET" &>/dev/null || nmap_rc=$?
+    "$TARGET" 2>/dev/null | while IFS= read -r line; do
+      # Show open port lines in green, section headers dimmed
+      if [[ "$line" =~ ^[0-9]+.*open ]]; then
+        echo -e "  ${G}[OPEN]${N}  $line" | tee -a "$LOG_FILE"
+      elif [[ "$line" =~ ^Nmap|^PORT|^Not ]]; then
+        echo -e "  ${DIM}$line${N}"
+      fi
+    done
+  nmap_rc=${PIPESTATUS[0]}
 
   case $nmap_rc in
-    0)   : ;;   # success
-    1)   warn "nmap: no hosts up or no open ports found" ;;
-    3)   warn "nmap: host seems down (try with -Pn)" ;;
+    0)   : ;;
+    1)   warn "nmap: no open ports found or host offline" ;;
+    3)   warn "nmap: host seems down — try adding -Pn flag" ;;
     124) warn "nmap quick scan timed out after 300s" ;;
     *)   warn "nmap returned code $nmap_rc — results may be partial" ;;
   esac
 
-  # Full TCP scan — background
-  act "Full TCP scan (background — all 65535 ports)..."
-  timeout 3600 nmap -sV -p- --open -T3 -oN "$out/full.txt" "$TARGET" &>/dev/null &
-  log "Full scan PID $! → $out/full.txt"
+  # Full TCP scan — background, silent (takes too long for live output)
+  act "Full TCP scan started in background (all 65535 ports)..."
+  timeout 3600 nmap -sV -p- --open -T3 -oN "$out/full.txt" "$TARGET" >/dev/null 2>&1 &
+  log "Full scan PID $! → results will be in $out/full.txt when complete"
 
   # UDP — root only
   if [[ $EUID -eq 0 ]]; then
@@ -1121,6 +1154,7 @@ usage() {
   echo -e "${W}Options:${N}"
   echo -e "  -t <target>   Domain or IP to scan"
   echo -e "  -m <modules>  Comma-separated: all|whois,dns,subdomains,portscan,web,cert"
+  echo -e "  -w <wordlist> Path to subdomain wordlist (default: built-in 80-entry list)"
   echo -e "  -p            List installed plugins"
   echo -e "  -h            This help"
   echo -e "  --update      Check and apply latest update"
