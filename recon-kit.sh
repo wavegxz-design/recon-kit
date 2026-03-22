@@ -14,7 +14,7 @@
 # Unbound vars are caught per-function with explicit guards.
 
 # ── VERSION ─────────────────────────────────────────────────────
-readonly VERSION="2.1.2"
+readonly VERSION="2.1.3"
 readonly SITE="krypthane.workernova.workers.dev"
 readonly RECON_KIT_DIR="${RECON_KIT_DIR:-$HOME/.recon-kit}"
 readonly PLUGINS_DIR="$RECON_KIT_DIR/plugins"
@@ -686,7 +686,7 @@ module_subdomains() {
     act "Running subfinder (passive)..."
     timeout 120 subfinder -d "$TARGET" -silent -o "$out/subfinder.txt" 2>/dev/null &
     local sf_pid=$!
-    spinner "$sf_pid" "subfinder scanning $TARGET..."
+    spinner "$sf_pid" "subfinder scanning ${TARGET}..."
     wait $sf_pid 2>/dev/null || true
     local sf_count; sf_count=$(wc -l < "$out/subfinder.txt" 2>/dev/null || echo 0)
     log "subfinder: ${G}${sf_count}${N} found"
@@ -719,7 +719,7 @@ module_subdomains() {
       "billing" "crm" "ldap" "dc1" "dc2" "proxy" "gateway" "fw"
     )
     info "Built-in wordlist: ${#subs_to_check[@]} subdomains"
-    info "Tip: ./recon-kit.sh -t $TARGET -w subdomains.txt for custom wordlist"
+    info "Tip: ./recon-kit.sh -t \"${TARGET}\" -w subdomains.txt for custom wordlist"
   fi
 
   act "Brute forcing ${#subs_to_check[@]} subdomains..."
@@ -859,7 +859,7 @@ module_web() {
   )
   local present=0 missing=0
   local audit_file="$hout/security_audit.txt"
-  echo "# Security Headers Audit — $TARGET — $(date)" > "$audit_file"
+  echo "# Security Headers Audit — ${TARGET} — $(date)" > "$audit_file"
 
   for h in "${sec_headers[@]}"; do
     if grep -qi "^${h}:" "$hout/https.txt" 2>/dev/null; then
@@ -1243,7 +1243,7 @@ main() {
   done
 
   sep_full
-  info "Target  : ${W}$TARGET${N}"
+  info "Target  : ${W}${TARGET}${N}"
   info "Modules : ${C}${MODULES[*]}${N}"
   info "Output  : ${Y}$OUTPUT_DIR${N}"
   sep_full
