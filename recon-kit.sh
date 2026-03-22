@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════╗
-# ║              RECON-KIT v2.1.1 — Reconnaissance Toolkit      ║
-# ║         Author  : krypthane | wavegxz-design                ║
+# ║              RECON-KIT v2.1.1 — Reconnaissance Toolkit       ║
+# ║         Author  : krypthane | wavegxz-design                 ║
 # ║         Site    : krypthane.workernova.workers.dev           ║
-# ║         GitHub  : github.com/wavegxz-design/recon-kit       ║
+# ║         GitHub  : github.com/wavegxz-design/recon-kit        ║
 # ║         License : MIT                                        ║
 # ║                                                              ║
-# ║   USE ONLY ON SYSTEMS YOU OWN OR HAVE WRITTEN PERMISSION.   ║
+# ║   USE ONLY ON SYSTEMS YOU OWN OR HAVE WRITTEN PERMISSION.    ║
 # ╚══════════════════════════════════════════════════════════════╝
 #
 # Intentionally NOT using set -euo pipefail globally.
@@ -685,7 +685,7 @@ module_subdomains() {
     act "Running subfinder..."
     timeout 120 subfinder -d "$TARGET" -silent -o "$out/subfinder.txt" 2>/dev/null &
     local sf_pid=$!
-    spinner $sf_pid "subfinder scanning $TARGET..."
+    spinner "$sf_pid" "subfinder scanning $TARGET..."
     wait $sf_pid 2>/dev/null || true
     local sf_count; sf_count=$(wc -l < "$out/subfinder.txt" 2>/dev/null || echo 0)
     log "subfinder: ${G}${sf_count}${N} found"
